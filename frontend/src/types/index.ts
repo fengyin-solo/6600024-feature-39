@@ -28,10 +28,14 @@ export interface AlarmEvent {
   id: string
   nodeId: string
   nodeName: string
+  area: string
+  alarmType: string
   severity: 'Critical' | 'High' | 'Medium' | 'Low' | 'Info'
   message: string
   timestamp: number
   acknowledged: boolean
+  ackComment?: string
+  ackTimestamp?: number
   value?: number | boolean | string
   threshold?: number
 }

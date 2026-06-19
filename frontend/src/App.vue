@@ -56,6 +56,24 @@
             <el-tag type="info" size="small">总计: {{ store.alarms.length }}</el-tag>
           </div>
 
+          <div class="alarm-toolbar" v-if="store.alarms.length > 0">
+            <el-checkbox
+              :model-value="isAllSelected"
+              :indeterminate="isIndeterminate"
+              @change="handleSelectAll"
+            >
+              全选未确认
+            </el-checkbox>
+            <el-button
+              type="primary"
+              size="small"
+              :disabled="selectedAlarmIds.length === 0"
+              @click="openBatchDialog"
+            >
+              批量确认{{ selectedAlarmIds.length ? `(${selectedAlarmIds.length})` : '' }}
+            </el-button>
+          </div>
+
           <div class="alarm-list">
             <div
               v-for="alarm in store.alarms"
@@ -68,29 +86,46 @@
                 'alarm-acknowledged': alarm.acknowledged
               }"
             >
-              <div class="alarm-item-header">
-                <el-tag
-                  :type="getSeverityType(alarm.severity)"
-                  size="small"
-                  effect="dark"
-                >
-                  {{ getSeverityLabel(alarm.severity) }}
-                </el-tag>
-                <span class="alarm-time">{{ formatTime(alarm.timestamp) }}</span>
-              </div>
-              <div class="alarm-item-body">
-                <span class="alarm-node">{{ alarm.nodeName }}</span>
-                <p class="alarm-message">{{ alarm.message }}</p>
-              </div>
-              <el-button
+              <el-checkbox
                 v-if="!alarm.acknowledged"
-                type="primary"
-                size="small"
-                text
-                @click="store.acknowledgeAlarm(alarm.id)"
-              >
-                确认
-              </el-button>
+                class="alarm-checkbox"
+                :model-value="selectedAlarmIds.includes(alarm.id)"
+                @change="(val) => toggleAlarm(alarm.id, val as boolean)"
+              />
+              <div v-else class="checkbox-placeholder"></div>
+              <div class="alarm-item-content">
+                <div class="alarm-item-header">
+                  <el-tag
+                    :type="getSeverityType(alarm.severity)"
+                    size="small"
+                    effect="dark"
+                  >
+                    {{ getSeverityLabel(alarm.severity) }}
+                  </el-tag>
+                  <span class="alarm-time">{{ formatTime(alarm.timestamp) }}</span>
+                </div>
+                <div class="alarm-item-body">
+                  <div class="alarm-tags">
+                    <el-tag size="small" type="info" effect="plain">{{ alarm.area }}</el-tag>
+                    <el-tag size="small" type="warning" effect="plain">{{ alarm.alarmType }}</el-tag>
+                  </div>
+                  <span class="alarm-node">{{ alarm.nodeName }}</span>
+                  <p class="alarm-message">{{ alarm.message }}</p>
+                  <div v-if="alarm.acknowledged && alarm.ackComment" class="alarm-comment">
+                    <span class="comment-label">备注:</span>{{ alarm.ackComment }}
+                  </div>
+                </div>
+                <div v-if="!alarm.acknowledged" class="alarm-item-footer">
+                  <el-button
+                    type="primary"
+                    size="small"
+                    text
+                    @click="store.acknowledgeAlarm(alarm.id)"
+                  >
+                    确认
+                  </el-button>
+                </div>
+              </div>
             </div>
 
             <div v-if="store.alarms.length === 0" class="no-alarms">
@@ -100,6 +135,24 @@
         </div>
       </aside>
     </div>
+
+    <el-dialog v-model="batchDialogVisible" title="批量确认报警" width="420px">
+      <div class="batch-info">
+        即将确认 <b>{{ selectedAlarmIds.length }}</b> 条报警,统一备注将记录到每一条已确认报警。
+      </div>
+      <el-input
+        v-model="batchComment"
+        type="textarea"
+        :rows="3"
+        placeholder="请输入统一备注(可选)"
+        maxlength="200"
+        show-word-limit
+      />
+      <template #footer>
+        <el-button @click="batchDialogVisible = false">取消</el-button>
+        <el-button type="primary" @click="confirmBatch">确认</el-button>
+      </template>
+    </el-dialog>
   </div>
 </template>
 
@@ -118,6 +171,51 @@ const updateTimer = ref<number | null>(null)
 const criticalCount = computed(() =>
   store.alarms.filter(a => a.severity === 'Critical' && !a.acknowledged).length
 )
+
+const selectedAlarmIds = ref<string[]>([])
+const batchDialogVisible = ref(false)
+const batchComment = ref('')
+
+const isAllSelected = computed(() => {
+  const selectable = store.alarms.filter(a => !a.acknowledged)
+  return selectable.length > 0 && selectable.every(a => selectedAlarmIds.value.includes(a.id))
+})
+
+const isIndeterminate = computed(() => {
+  const selectable = store.alarms.filter(a => !a.acknowledged)
+  const selectedCount = selectable.filter(a => selectedAlarmIds.value.includes(a.id)).length
+  return selectedCount > 0 && selectedCount < selectable.length
+})
+
+function toggleAlarm(id: string, checked: boolean) {
+  if (checked) {
+    if (!selectedAlarmIds.value.includes(id)) selectedAlarmIds.value.push(id)
+  } else {
+    selectedAlarmIds.value = selectedAlarmIds.value.filter(i => i !== id)
+  }
+}
+
+function handleSelectAll(checked: boolean) {
+  if (checked) {
+    selectedAlarmIds.value = store.alarms.filter(a => !a.acknowledged).map(a => a.id)
+  } else {
+    selectedAlarmIds.value = []
+  }
+}
+
+function openBatchDialog() {
+  if (selectedAlarmIds.value.length === 0) return
+  batchComment.value = ''
+  batchDialogVisible.value = true
+}
+
+function confirmBatch() {
+  const count = selectedAlarmIds.value.length
+  store.acknowledgeAlarmsBatch(selectedAlarmIds.value, batchComment.value.trim())
+  selectedAlarmIds.value = []
+  batchDialogVisible.value = false
+  ElMessage.success(`已批量确认 ${count} 条报警`)
+}
 
 function toggleConnection() {
   if (store.isConnected) {
@@ -284,6 +382,68 @@ onUnmounted(() => {
   border-radius: 6px;
   padding: 10px;
   border-left: 3px solid #64748b;
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+}
+
+.alarm-checkbox {
+  margin-top: 2px;
+  flex-shrink: 0;
+}
+
+.checkbox-placeholder {
+  width: 16px;
+  flex-shrink: 0;
+}
+
+.alarm-item-content {
+  flex: 1;
+  min-width: 0;
+}
+
+.alarm-item-footer {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 4px;
+}
+
+.alarm-tags {
+  display: flex;
+  gap: 4px;
+  flex-wrap: wrap;
+  margin-bottom: 4px;
+}
+
+.alarm-comment {
+  margin-top: 6px;
+  padding: 4px 6px;
+  background: rgba(15, 23, 42, 0.6);
+  border-radius: 4px;
+  font-size: 12px;
+  color: #94a3b8;
+}
+
+.comment-label {
+  color: #22d3ee;
+  margin-right: 4px;
+}
+
+.alarm-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 12px;
+  padding: 8px 10px;
+  background: rgba(15, 23, 42, 0.6);
+  border-radius: 6px;
+}
+
+.batch-info {
+  margin-bottom: 12px;
+  color: #cbd5e1;
+  font-size: 13px;
+  line-height: 1.6;
 }
 
 .alarm-critical {

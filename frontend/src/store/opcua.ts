@@ -164,12 +164,34 @@ export const useOpcuaStore = defineStore('opcua', () => {
     })
   }
 
+  // 根据节点 id 查找其所属区域名称
+  function getAreaNameOfNode(nodeId: string): string {
+    let result = ''
+    function search(nodes: OPCUANode[], areaName: string): boolean {
+      for (const node of nodes) {
+        const currentArea = node.id.startsWith('plc_area') ? node.name : areaName
+        if (node.id === nodeId) {
+          result = currentArea
+          return true
+        }
+        if (node.children && search(node.children, currentArea)) return true
+      }
+      return false
+    }
+    search(nodeTree.value, '')
+    return result
+  }
+
   // 检查报警
   function checkAlarms(node: OPCUANode, value: number | boolean | string) {
+    const area = getAreaNameOfNode(node.id)
+    const alarmType = node.name
     if (node.id === 'temp_sensor' && typeof value === 'number' && value > 28) {
       addAlarm({
         nodeId: node.nodeId,
         nodeName: node.name,
+        area,
+        alarmType,
         severity: 'High',
         message: `温度过高: ${value}°C (阈值: 28°C)`,
         value,
@@ -180,6 +202,8 @@ export const useOpcuaStore = defineStore('opcua', () => {
       addAlarm({
         nodeId: node.nodeId,
         nodeName: node.name,
+        area,
+        alarmType,
         severity: 'Critical',
         message: `压力超限: ${value} MPa (阈值: 4.0 MPa)`,
         value,
@@ -190,6 +214,8 @@ export const useOpcuaStore = defineStore('opcua', () => {
       addAlarm({
         nodeId: node.nodeId,
         nodeName: node.name,
+        area,
+        alarmType,
         severity: 'Medium',
         message: `电机转速偏高: ${value} RPM (阈值: 1550 RPM)`,
         value,
@@ -251,11 +277,26 @@ export const useOpcuaStore = defineStore('opcua', () => {
   }
 
   // 确认报警
-  function acknowledgeAlarm(alarmId: string) {
+  function acknowledgeAlarm(alarmId: string, comment?: string) {
     const alarm = alarms.value.find(a => a.id === alarmId)
     if (alarm) {
       alarm.acknowledged = true
+      alarm.ackComment = comment
+      alarm.ackTimestamp = Date.now()
     }
+  }
+
+  // 批量确认报警并记录统一备注
+  function acknowledgeAlarmsBatch(alarmIds: string[], comment: string) {
+    const now = Date.now()
+    alarmIds.forEach(id => {
+      const alarm = alarms.value.find(a => a.id === id)
+      if (alarm && !alarm.acknowledged) {
+        alarm.acknowledged = true
+        alarm.ackComment = comment
+        alarm.ackTimestamp = now
+      }
+    })
   }
 
   // 清空报警
@@ -294,6 +335,7 @@ export const useOpcuaStore = defineStore('opcua', () => {
     addSubscription,
     removeSubscription,
     acknowledgeAlarm,
+    acknowledgeAlarmsBatch,
     clearAlarms,
     connect,
     disconnect,
